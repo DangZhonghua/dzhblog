@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "My First post"
+title: "Ceph Object Calculation"
 date: 2018-07-31 23:29:01
 categories:
 - Foo
