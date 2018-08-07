@@ -1,3 +1,11 @@
+---
+layout: post
+title: "ceph monitor study"
+date: 2018-08-07 12:55:00
+categories: ceph
+tags:
+---
+
 # ceph monitor study
 [Monitor Config Reference](http://docs.ceph.com/docs/master/rados/configuration/mon-config-ref/)
 
@@ -78,14 +86,8 @@ In Ceph versions 0.59 and later, ***Ceph Monitors store their data as key/value 
 
 Generally, we do not recommend changing the default data location. If you modify the default location, we recommend that you make it uniform across Ceph Monitors by setting it in the [mon] section of the configuration file.
 
-## monitor configuration option list
+## monitor common configuration option list
 
-```c++
-***mon data***
-    Description:	The monitor’s data location.
-    Type:	String
-    Default:	/var/lib/ceph/mon/$cluster-$id
-```
 
 Option Name | Type | Default | Description
 ---|:---:|:---:|:---
@@ -103,3 +105,75 @@ mon health data update interval|Float|60|How often (in seconds) the monitor in q
 mon health to clog|Boolean|True|Enable sending health summary to cluster log periodically.
 mon health to clog tick interval|Integer|3600|How often (in seconds) the monitor send health summary to cluster log (a non-positive number disables it). If current health summary is empty or identical to the last time, monitor will not send it to cluster log.
 mon health to clog interval|Integer|60|How often (in seconds) the monitor send health summary to cluster log (a non-positive number disables it). Monitor will always send the summary to cluster log no matter if the summary changes or not.
+
+
+
+## Storage Capacity
+The following settings only apply on cluster creation and are then stored in the OSDMap.
+```c++
+[global]
+
+        mon osd full ratio = .80
+        mon osd backfillfull ratio = .75
+        mon osd nearfull ratio = .70
+```
+> If some OSDs are nearfull, but others have plenty of capacity, you may have a problem with the CRUSH weight for the nearfull OSDs.
+> These settings only apply during cluster creation. Afterwards they need to be changed in the OSDMap using ceph osd set-nearfull-ratio and ceph osd set-full-ratio
+
+Option Name|Type|Default|Description
+:---|:---:|:---:|:---
+mon osd full ratio|Float|.95|The percentage of disk space used before an OSD is considered full.
+mon osd backfillfull ratio|Float|.90|The percentage of disk space used before an OSD is considered too full to backfill.
+mon osd nearfull ratio|Float|.85|The percentage of disk space used before an OSD is considered nearfull.
+
+## HeartBeat
+Ceph monitors know about the cluster by requiring reports from each OSD, and by receiving reports from OSDs about the status of their neighboring OSDs. Ceph provides reasonable default settings for monitor/OSD interaction; however, you may modify them as needed.
+
+### Monitor Store Synchronization
+
+cluster with multiple monitors (recommended), each monitor checks to see if a neighboring monitor has a more recent version of the cluster map (e.g., a map in a neighboring monitor with one or more epoch numbers higher than the most current epoch in the map of the instant monitor). Periodically, one monitor in the cluster may fall behind the other monitors to the point where it must leave the quorum, synchronize to retrieve the most current information about the cluster, and then rejoin the quorum.
+For the purposes of synchronization, monitors may assume one of three roles (this is paxos algorithm role):
+
+1. ***Leader***: The Leader is the first monitor to achieve the most recent Paxos version of the cluster map.
+2. ***Provider***: The Provider is a monitor that has the most recent version of the cluster map, but wasn’t the first to achieve the most recent version.
+3. ***Requester***: A Requester is a monitor that has fallen behind the leader and must synchronize in order to retrieve the most recent information about the cluster before it can rejoin the quorum.
+
+These roles enable a leader to delegate synchronization duties to a provider, which prevents synchronization requests from overloading the leader–improving performance. In the following diagram, the requester has learned that it has fallen behind the other monitors. The requester asks the leader to synchronize, and the leader tells the requester to synchronize with a provider.
+![Synchronization example](http://docs.ceph.com/docs/master/_images/ditaa-215fab4d12b3f0727a4fbc633b58887918820ca9.png)
+
+Synchronization always occurs when a new monitor joins the cluster. During runtime operations, monitors may receive updates to the cluster map at different times. This means the leader and provider roles may migrate from one monitor to another. If this happens while synchronizing (e.g., a provider falls behind the leader), the provider can terminate synchronization with a requester.
+
+Once synchronization is complete, Ceph requires trimming across the cluster. Trimming requires that the placement groups are active + clean.
+
+monitor synchroniztion:
+
+Option Name|Type|Default|Description
+:---|:---:|:---:|:---
+mon sync trim timeout|Double|30.0|*
+mon sync heartbeat timeout|Double|30.0|*
+mon sync heartbeat interval|Double|5.0|*
+mon sync backoff timeout|Double|30.0|*
+mon sync timeout|Double|60.0|Number of seconds the monitor will wait for the next update message from its sync provider before it gives up and bootstrap again.
+mon sync max retries|Integer|5|*
+mon sync max payload size|32-bit Integer|1045676|The maximum size for a sync payload (in bytes)
+paxos max join drift|Integer|10|The maximum Paxos iterations before we must first sync the monitor data stores. When a monitor finds that its peer is too far ahead of it, it will first sync with data stores before moving on.
+paxos stash full interval|Integer|25|How often (in commits) to stash a full copy of the PaxosService state. Current this setting only affects mds, mon, auth and mgr PaxosServices.
+paxos propose interval|Double|1.0|Gather updates for this time interval before proposing a map update.
+paxos min|Integer|500|	The minimum number of paxos states to keep around
+paxos min wait|Double|0.05|	The minimum amount of time to gather updates after a period of inactivity.
+paxos trim min|Integer|250|Number of extra proposals tolerated before trimming
+paxos trim max|Integer|500|The maximum number of extra proposals to trim at a time
+paxos service trim min|Integer|250|The minimum amount of versions to trigger a trim (0 disables it)
+paxos service trim max|Integer|500|The maximum amount of versions to trim during a single proposal (0 disables it)
+mon max pgmap epochs|Integer|500|The maximum amount of pgmap epochs to trim during a single proposal
+mon mds force trim to|Integer|0|Force monitor to trim mdsmaps to this point (0 disables it. dangerous, use with care)
+mon osd force trim to|Integer|0|	Force monitor to trim osdmaps to this point, even if there is PGs not clean at the specified epoch (0 disables it. dangerous, use with care)
+mon osd cache size|Integer|10|The size of osdmaps cache, not to rely on underlying store’s cache
+mon election timeout|Float|5|On election proposer, maximum waiting time for all ACKs in seconds.
+mon lease|Float|5|The length (in seconds) of the lease on the monitor’s versions.
+mon lease renew interval factor|Float|0.6|mon lease * mon lease renew interval factor will be the interval for the Leader to renew the other monitor’s leases. The factor should be less than 1.0.
+mon lease ack timeout factor|Float|2.0|The Leader will wait mon lease * mon lease ack timeout factor for the Providers to acknowledge the lease extension.
+mon accept timeout factor|Float|2.0|	The Leader will wait mon lease * mon accept timeout factor for the Requester(s) to accept a Paxos update. It is also used during the Paxos recovery phase for similar purposes.
+mon min osdmap epochs|32bit int|500|Minimum number of OSD map epochs to keep at all times.
+mon max pgmap epochs|32bit int|500|Maximum number of PG map epochs the monitor should keep.
+mon max log epochs|32bit int|500|Maximum number of Log epochs the monitor should keep.
