@@ -33,3 +33,7 @@ ceph osd crush rule ls
 ```c++
 ceph osd crush rule dump
 ```
+> view the contents of crush map
+```c++
+ceph osd crush dump
+```

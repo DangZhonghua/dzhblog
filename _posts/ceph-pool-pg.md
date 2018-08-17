@@ -571,3 +571,44 @@ The only input required by the client is the object ID and the pool. It’s simp
     Ceph prepends the pool ID to the PG ID (e.g., 4.58).
 
 ***Computing object locations is much faster than performing object location query over a chatty session. The CRUSH algorithm allows a client to compute where objects should be stored, and enables the client to contact the primary OSD to store or retrieve the objects.***
+
+### User-visible PG States
+
+creating
+    the PG is still being created
+active
+    requests to the PG will be processed
+clean
+    all objects in the PG are replicated the correct number of times
+down
+    a replica with necessary data is down, so the pg is offline
+replay
+    the PG is waiting for clients to replay operations after an OSD crashed
+splitting
+    the PG is being split into multiple PGs (not functional as of 2012-02)
+scrubbing
+    the PG is being checked for inconsistencies
+degraded
+    some objects in the PG are not replicated enough times yet
+inconsistent
+    replicas of the PG are not consistent (e.g. objects are the wrong size, objects are missing from one replica after recovery finished, etc.)
+peering
+    the PG is undergoing the Peering process
+repair
+    the PG is being checked and any inconsistencies found will be repaired (if possible)
+recovering
+    objects are being migrated/synchronized with replicas
+recovery_wait
+    the PG is waiting for the local/remote recovery reservations
+backfilling
+    a special case of recovery, in which the entire contents of the PG are scanned and synchronized, instead of inferring what needs to be transferred from the PG logs of recent operations
+backfill_wait
+    the PG is waiting in line to start backfill
+backfill_toofull
+    backfill reservation rejected, OSD too full
+incomplete
+    a pg is missing a necessary period of history from its log. If you see this state, report a bug, and try to start any failed OSDs that may contain the needed information.
+stale
+    the PG is in an unknown state - the monitors have not received an update for it since the PG mapping changed.
+remapped
+    the PG is temporarily mapped to a different set of OSDs from what CRUSH specified 
