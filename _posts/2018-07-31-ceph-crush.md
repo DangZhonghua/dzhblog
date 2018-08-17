@@ -20,3 +20,5 @@ hash("object1") = ps, the ps is the pg's seed. PG = {poolid, ps, preferred}
 
 The second calculation is: calculate which osds will store the object:
 the PG's ps will be as seed be passed into crush algorithm to calculate the OSDS.
+
+The crush algorithm takes two inputs: a picture of the cluster with status information about which nodes are up/down and in/out, and the pgid to place. The former is encapsulated by the OSDMap. Maps are numbered by epoch (epoch_t). These maps are passed around within the OSD as std::tr1::shared_ptr<const OSDMap>.

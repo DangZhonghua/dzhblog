@@ -572,43 +572,179 @@ The only input required by the client is the object ID and the pool. It’s simp
 
 ***Computing object locations is much faster than performing object location query over a chatty session. The CRUSH algorithm allows a client to compute where objects should be stored, and enables the client to contact the primary OSD to store or retrieve the objects.***
 
+### peering and set
+Noted that Ceph OSD Daemons check each others heartbeats and report back to the Ceph Monitor. Another thing Ceph OSD daemons do is called ‘peering’, which is the process of bringing all of the OSDs that store a Placement Group (PG) into agreement about the state of all of the objects (and their metadata) in that PG. In fact, Ceph OSD Daemons [Report Peering Failure](http://docs.ceph.com/docs/master/rados/configuration/mon-osd-interaction/#osds-report-peering-failure) to the Ceph Monitors. Peering issues usually resolve themselves; however, if the problem persists, you may need to refer to the Troubleshooting Peering Failure section.
+
+Note
+
+Agreeing on the state does not mean that the PGs have the latest contents.
+
+The Ceph Storage Cluster was designed to store at least two copies of an object (i.e., size = 2), which is the minimum requirement for data safety. For high availability, a Ceph Storage Cluster should store more than two copies of an object (e.g., size = 3 and min size = 2) so that it can continue to run in a degraded state while maintaining data safety.
+
+Referring back to the diagram in [Smart Daemons Enable Hyperscale](http://docs.ceph.com/docs/master/architecture/#smart-daemons-enable-hyperscale), we do not name the Ceph OSD Daemons specifically (e.g., osd.0, osd.1, etc.), but rather refer to them as Primary, Secondary, and so forth. By convention, the Primary is the first OSD in the Acting Set, and is responsible for coordinating the peering process for each placement group where it acts as the Primary, and is the ONLY OSD that that will accept client-initiated writes to objects for a given placement group where it acts as the Primary.
+
+When a series of OSDs are responsible for a placement group, that series of OSDs, we refer to them as an Acting Set. An Acting Set may refer to the Ceph OSD Daemons that are currently responsible for the placement group, or the Ceph OSD Daemons that were responsible for a particular placement group as of some epoch.
+
+The Ceph OSD daemons that are part of an Acting Set may not always be up. When an OSD in the Acting Set is up, it is part of the Up Set. The Up Set is an important distinction, because Ceph can remap PGs to other Ceph OSD Daemons when an OSD fails.
+
+Note
+
+In an Acting Set for a PG containing osd.25, osd.32 and osd.61, the first OSD, osd.25, is the Primary. If that OSD fails, the Secondary, osd.32, becomes the Primary, and osd.25 will be removed from the Up Set. 
+
+### Rebalancing
+When you add a Ceph OSD Daemon to a Ceph Storage Cluster, the cluster map gets updated with the new OSD. Referring back to [Calculating PG IDs](http://docs.ceph.com/docs/master/architecture/#calculating-pg-ids), this changes the cluster map. Consequently, it changes object placement, because it changes an input for the calculations. The following diagram depicts the rebalancing process (albeit rather crudely, since it is substantially less impactful with large clusters) where some, but not all of the PGs migrate from existing OSDs (OSD 1, and OSD 2) to the new OSD (OSD 3). Even when rebalancing, CRUSH is stable. Many of the placement groups remain in their original configuration, and each OSD gets some added capacity, so there are no load spikes on the new OSD after rebalancing is complete.
+![rebalance](http://docs.ceph.com/docs/master/_images/ditaa-b31e1f646135b9706000fa0799d572563dffac81.png)
+
+### Data Consistency
+As part of maintaining data consistency and cleanliness, Ceph OSDs can also scrub objects within placement groups. That is, Ceph OSDs can compare object metadata in one placement group with its replicas in placement groups stored in other OSDs. Scrubbing (usually performed daily) catches OSD bugs or filesystem errors. OSDs can also perform deeper scrubbing by comparing data in objects bit-for-bit. Deep scrubbing (usually performed weekly) finds bad sectors on a disk that weren’t apparent in a light scrub.
+
 ### User-visible PG States
 
-creating
-    the PG is still being created
-active
-    requests to the PG will be processed
-clean
-    all objects in the PG are replicated the correct number of times
-down
-    a replica with necessary data is down, so the pg is offline
-replay
-    the PG is waiting for clients to replay operations after an OSD crashed
-splitting
-    the PG is being split into multiple PGs (not functional as of 2012-02)
-scrubbing
-    the PG is being checked for inconsistencies
-degraded
-    some objects in the PG are not replicated enough times yet
-inconsistent
-    replicas of the PG are not consistent (e.g. objects are the wrong size, objects are missing from one replica after recovery finished, etc.)
-peering
-    the PG is undergoing the Peering process
-repair
-    the PG is being checked and any inconsistencies found will be repaired (if possible)
-recovering
-    objects are being migrated/synchronized with replicas
-recovery_wait
-    the PG is waiting for the local/remote recovery reservations
-backfilling
-    a special case of recovery, in which the entire contents of the PG are scanned and synchronized, instead of inferring what needs to be transferred from the PG logs of recent operations
-backfill_wait
-    the PG is waiting in line to start backfill
-backfill_toofull
-    backfill reservation rejected, OSD too full
-incomplete
-    a pg is missing a necessary period of history from its log. If you see this state, report a bug, and try to start any failed OSDs that may contain the needed information.
-stale
-    the PG is in an unknown state - the monitors have not received an update for it since the PG mapping changed.
-remapped
-    the PG is temporarily mapped to a different set of OSDs from what CRUSH specified 
+State|Meaning
+:---|:---
+creating|the PG is still being created
+active|requests to the PG will be processed
+clean|all objects in the PG are replicated the correct number of times
+down|a replica with necessary data is down, so the pg is offline
+replay|the PG is waiting for clients to replay operations after an OSD crashed
+splitting|the PG is being split into multiple PGs (not functional as of 2012-02)
+scrubbing|the PG is being checked for inconsistencies    
+degraded|some objects in the PG are not replicated enough times yet
+inconsistent|replicas of the PG are not consistent (e.g. objects are the wrong size, objects are missing from one replica after recovery finished, etc.)    
+peering|the PG is undergoing the Peering process
+repair|the PG is being checked and any inconsistencies found will be repaired (if possible)   
+recovering|objects are being migrated/synchronized with replicas
+recovery_wait|the PG is waiting for the local/remote recovery reservations
+backfilling|a special case of recovery, in which the entire contents of the PG are scanned and synchronized, instead of inferring what needs to be transferred from the PG logs of recent operations
+backfill_wait|the PG is waiting in line to start backfill
+backfill_toofull|backfill reservation rejected, OSD too full  
+incomplete|a pg is missing a necessary period of history from its log. If you see this state, report a bug, and try to start any failed OSDs that may contain the needed information.
+stale|the PG is in an unknown state - the monitors have not received an update for it since the PG mapping changed.
+remapped|the PG is temporarily mapped to a different set of OSDs from what CRUSH specified
+
+[more state description](http://www.xuxiaopang.com/2016/11/11/doc-ceph-table/#more)
+
+### Peering
+the process of bringing all of the OSDs that store a Placement Group (PG) into agreement about the state of all of the objects (and their metadata) in that PG. Note that agreeing on the state does not mean that they all have the latest contents.
+
+1. Acting Set:the ordered list of OSDs who are (or were as of some epoch) responsible for a particular PG. ***primary*** the (by convention first) member of the acting set, who is responsible for coordination peering, and is the only OSD that will accept client initiated writes to objects in a placement group. ***replica*** a non-primary OSD in the acting set for a placement group (and who has been recognized as such and activated by the primary). ***stray*** an OSD who is not a member of the current acting set, but has not yet been told that it can delete its copies of a particular placement group
+
+2. Up Set:the ordered list of OSDs responsible for a particular PG for a particular epoch according to CRUSH. Normally this is the same as the acting set, except when the acting set has been explicitly overridden via PG temp in the OSDMap.
+3. current interval or past interval:a sequence of OSD map epochs during which the acting set and up set for particular PG do not change
+4. recovery: ensuring that copies of all of the objects in a PG are on all of the OSDs in the acting set. Once peering has been performed, the primary can start accepting write operations, and recovery can proceed in the background.
+5. PG info basic metadata about the PG’s creation epoch, the version for the most recent write to the PG, last epoch started, last epoch clean, and the beginning of the current interval. Any inter-OSD communication about PGs includes the PG info, such that any OSD that knows a PG exists (or once existed) also has a lower bound on last epoch clean or last epoch started.
+6. PG log
+   ***
+   a list of recent updates made to objects in a PG. Note that these logs can be truncated after all OSDs in the acting set have acknowledged up to a certain point.
+   ***
+7. Authoritative History
+   ***
+   a complete, and fully ordered set of operations that, if performed, would bring an OSD’s copy of a Placement Group up to date.
+   ***
+8. missing set: Each OSD notes update log entries and if they imply updates to the contents of an object, adds that object to a list of needed updates. This list is called the missing set for that <OSD,PG>.
+9. epoch:a (monotonically increasing) OSD map version number
+10. last epoch start:the last epoch at which all nodes in the acting set for a particular placement group agreed on an authoritative history. At this point, peering is deemed to have been successful.
+11. ***last epoch clean***:the last epoch at which all nodes in the acting set for a particular placement group were completely up to date (both PG logs and object contents). At this point, recovery is deemed to have been completed.
+12. up_thru: before a primary can successfully complete the peering process, it must inform a monitor that is alive through the current OSD map epoch by having the monitor set its up_thru in the osd map. This helps peering ignore previous acting sets for which peering never completed after certain sequences of failures, such as the second interval below:
+
+        acting set = [A,B]
+        acting set = [A]
+        acting set = [] very shortly after (e.g., simultaneous failure, but staggered detection)
+        acting set = [B] (B restarts, A does not)
+#### peering process
+
+
+***
+***PG temp*** This can be used to rebalance the data
+    a temporary placement group acting set used while backfilling the primary osd. Let say acting is [0,1,2] and we are active+clean. Something happens and acting is now [3,1,2]. osd 3 is empty and can’t serve reads although it is the primary. osd.3 will see that and request a PG temp of [1,2,3] to the monitors using a MOSDPGTemp message so that osd.1 temporarily becomes the primary. It will select osd.3 as a backfill peer and continue to serve reads and writes while osd.3 is backfilled. When backfilling is complete, PG temp is discarded and the acting set changes back to [3,1,2] and osd.3 becomes the primary.
+***
+
+### [Map and PG Message handling](http://docs.ceph.com/docs/master/dev/osd_internals/map_message_handling/)
+
+#### overview
+
+The OSD handles routing incoming messages to PGs, creating the PG if necessary in some cases.
+
+PG messages generally come in two varieties:
+1. Peering Messages
+2. Ops/SubOps
+
+There are several ways in which a message might be dropped or delayed. It is important that the message delaying does not result in a violation of certain message ordering requirements on the way to the relevant PG handling logic:
+1. Ops referring to the same object must not be reordered.
+2. Peering messages must not be reordered.
+3. Subops must not be reordered.
+
+#### MOSDMAP
+MOSDMap messages may come from either monitors or other OSDs. Upon receipt, the OSD must perform several tasks:
+
+        Persist the new maps to the filestore. Several PG operations rely on having access to maps dating back to the last time the PG was clean.
+        Update and persist the superblock.
+        Update OSD state related to the current map.
+        Expose new maps to PG processes via OSDService.
+        Remove PGs due to pool removal.
+        Queue dummy events to trigger PG map catchup.
+
+Each PG asynchronously catches up to the currently published map during process_peering_events before processing the event. As a result, different PGs may have different views as to the “current” map.
+One consequence of this design is that messages containing submessages from multiple PGs (MOSDPGInfo, MOSDPGQuery, MOSDPGNotify) must tag each submessage with the PG’s epoch as well as tagging the message as a whole with the OSD’s current published epoch.
+
+#### MOSDPGOp/MOSDPGSubOp
+See OSD::dispatch_op, OSD::handle_op, OSD::handle_sub_op
+
+MOSDPGOps are used by clients to initiate rados operations. MOSDSubOps are used between OSDs to coordinate most non peering activities including replicating MOSDPGOp operations.
+
+OSD::require_same_or_newer map checks that the current OSDMap is at least as new as the map epoch indicated on the message. If not, the message is queued in OSD::waiting_for_osdmap via OSD::wait_for_new_map. Note, this cannot violate the above conditions since any two messages will be queued in order of receipt and if a message is received with epoch e0, a later message from the same source must be at epoch at least e0. Note that two PGs from the same OSD count for these purposes as different sources for single PG messages. That is, messages from different PGs may be reordered.
+
+MOSDPGOps follow the following process:
+
+        OSD::handle_op: validates permissions and crush mapping. discard the request if they are not connected and the client cannot get the reply ( See OSD::op_is_discardable ) See OSDService::handle_misdirected_op See PG::op_has_sufficient_caps See OSD::require_same_or_newer_map
+        OSD::enqueue_op
+
+MOSDSubOps follow the following process:
+
+        OSD::handle_sub_op checks that sender is an OSD
+        OSD::enqueue_op
+
+OSD::enqueue_op calls PG::queue_op which checks waiting_for_map before calling OpWQ::queue which adds the op to the queue of the PG responsible for handling it.
+
+OSD::dequeue_op is then eventually called, with a lock on the PG. At this time, the op is passed to PG::do_request, which checks that:
+
+        the PG map is new enough (PG::must_delay_op)
+        the client requesting the op has enough permissions (PG::op_has_sufficient_caps)
+        the op is not to be discarded (PG::can_discard_{request,op,subop,scan,backfill})
+        the PG is active (PG::flushed boolean)
+        the op is a CEPH_MSG_OSD_OP and the PG is in PG_STATE_ACTIVE state and not in PG_STATE_REPLAY
+
+If these conditions are not met, the op is either discarded or queued for later processing. If all conditions are met, the op is processed according to its type:
+
+        CEPH_MSG_OSD_OP is handled by PG::do_op
+        MSG_OSD_SUBOP is handled by PG::do_sub_op
+        MSG_OSD_SUBOPREPLY is handled by PG::do_sub_op_reply
+        MSG_OSD_PG_SCAN is handled by PG::do_scan
+        MSG_OSD_PG_BACKFILL is handled by PG::do_backfill
+#### CEPH_MSG_OSD_OP processing
+PrimaryLogPG::do_op handles CEPH_MSG_OSD_OP op and will queue it
+
+        in wait_for_all_missing if it is a CEPH_OSD_OP_PGLS for a designated snapid and some object updates are still missing
+        in waiting_for_active if the op may write but the scrubber is working
+        in waiting_for_missing_object if the op requires an object or a snapdir or a specific snap that is still missing
+        in waiting_for_degraded_object if the op may write an object or a snapdir that is degraded, or if another object blocks it (“blocked_by”)
+        in waiting_for_backfill_pos if the op requires an object that will be available after the backfill is complete
+        in waiting_for_ack if an ack from another OSD is expected
+        in waiting_for_ondisk if the op is waiting for a write to complete
+
+#### Peering Messages
+See OSD::handle_pg_(notify|info|log|query)
+
+Peering messages are tagged with two epochs:
+
+        epoch_sent: map epoch at which the message was sent
+        query_epoch: map epoch at which the message triggering the message was sent
+
+These are the same in cases where there was no triggering message. We discard a peering message if the message’s query_epoch if the PG in question has entered a new epoch (See PG::old_peering_evt, PG::queue_peering_event). Notifies, infos, notifies, and logs are all handled as PG::RecoveryMachine events and are wrapped by PG::queue_* by PG::CephPeeringEvts, which include the created state machine event along with epoch_sent and query_epoch in order to generically check PG::old_peering_message upon insertion and removal from the queue.
+
+Note, notifies, logs, and infos can trigger the creation of a PG. See OSD::get_or_create_pg.
+
+
+### [Log Based PG](http://docs.ceph.com/docs/master/dev/osd_internals/log_based_pg/)
+
+Currently, consistency for all ceph pool types is ensured by primary log-based replication. This goes for both erasure-coded and replicated pools.

@@ -1,0 +1,1 @@
+[Object Store Architecture](http://docs.ceph.com/docs/master/dev/object-store/)

@@ -1,0 +1,1 @@
+[Configuring Monitor/OSD Interaction](http://docs.ceph.com/docs/master/rados/configuration/mon-osd-interaction/#osds-report-peering-failure)
