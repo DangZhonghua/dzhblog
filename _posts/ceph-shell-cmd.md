@@ -41,3 +41,7 @@
 39. ceph quorum_status:how the monitor quorum, including which monitors are participating and which one is the leader
 40. ceph [-m monhost] mon_status: query the status of a single monitor, including whether or not it is in the quorum.
 41. ceph auth ls
+42. ceph osd lspools
+43. ceph pg dump_stuck stale
+44. ceph pg dump_stuck inactive
+45. ceph pg dump_stuck unclean
